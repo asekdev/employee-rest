@@ -1,43 +1,101 @@
-import Express from "express";
-import Mongoose from "mongoose";
+import Express, { Request, Response } from "express";
+import mongoose from "mongoose";
 import Employee from "../models/Employee";
 
 const router = Express.Router();
-Mongoose.connect("mongodb://localhost/jobDB", { useNewUrlParser: true });
-const db = Mongoose.connection;
+
+const db = mongoose.connection;
+
+const connect = () => {
+	mongoose.connect("mongodb://user:123@localhost/jobDB", { useNewUrlParser: true }).then(
+		() => {
+			console.log("Connected to the db!!!");
+		},
+		err => {
+			console.log(err);
+		}
+	);
+};
 
 db.on("connected", () => {
 	console.log("connected to db");
 });
 
-router.get("/", (req, res) => {
-	Employee.findOneAndUpdate({ id: 1 }, { first_name: "Jack", last_name: "Joe" }, { new: true }, (err, employee) => {
-		res.send(employee);
-		db.close();
+router.get("/single/:id", (req: Request, res: Response) => {
+	connect();
+	Employee.findOne({ _id: req.params.id }).exec((err, result) => {
+		if (err) {
+			res.send("An error occurred retreiving employees.");
+			mongoose.disconnect().then(() => {
+				console.log("disconnected from db error");
+			});
+		}
+		res.send(result);
+		mongoose.disconnect().then(() => {
+			console.log("disconnected from db");
+		});
 	});
 });
 
-router.get("/new", (req, res) => {
-	console.log(req.query);
-	// res.json(req.query);
+router.get("/search", (req: Request, res: Response) => {
+	connect();
 	let query = req.query;
-	let main = { [query["main"]]: { $gt: query["$gt"] } };
+	let regex = new RegExp(query.input);
 
-	console.log(main);
+	console.log(regex);
 
-	Employee.find(
-		main,
-		{ first_name: true, last_name: true, id: true, salary: true },
-		{ limit: parseInt(req.query.limit) }
-	)
-		.sort([[query.sortBy, 1]])
+	Employee.aggregate([
+		{ $project: { name: { $concat: ["$first_name", " ", "$last_name"] } } },
+		{ $match: { name: { $regex: regex, $options: "i" } } }
+	])
+		.limit(5)
 		.exec((err, result) => {
 			if (err) {
 				res.send("An error occurred retreiving employees.");
-				Mongoose.disconnect();
+				mongoose.disconnect().then(() => {
+					console.log("disconnected from db error");
+				});
 			}
 			res.send(result);
-			Mongoose.disconnect().then(() => {
+			mongoose.disconnect().then(() => {
+				console.log("disconnected from db");
+			});
+		});
+});
+
+router.get("/all", (req: Request, res: Response) => {
+	connect();
+	let query = req.query;
+	let options = { limit: 25 };
+	let condition = {};
+	let aggregation = {};
+
+	if (query.hasOwnProperty("limit")) {
+		options.limit = parseInt(query["limit"]);
+	}
+
+	if (query.hasOwnProperty("cond") && (query.hasOwnProperty("condGt") || query.hasOwnProperty("condLt"))) {
+		if (query.hasOwnProperty("condGt")) {
+			Object.assign(aggregation, { $gt: parseInt(query["condGt"]) });
+		} else if (query.hasOwnProperty("condLt")) {
+			Object.assign(aggregation, { $lt: parseInt(query["condLt"]) });
+		}
+		let condValue = query["cond"];
+		condition = { [condValue]: aggregation };
+	}
+	console.log(condition);
+
+	Employee.find(condition, {}, options)
+		.sort([[query.sortBy, query.sortType]])
+		.exec((err, result) => {
+			if (err) {
+				res.send("An error occurred retreiving employees.");
+				mongoose.disconnect().then(() => {
+					console.log("disconnected from db error");
+				});
+			}
+			res.send(result);
+			mongoose.disconnect().then(() => {
 				console.log("disconnected from db");
 			});
 		});
